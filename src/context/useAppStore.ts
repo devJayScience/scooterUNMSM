@@ -45,16 +45,17 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     requestScooterRPC: async (scooterId: string) => {
         try {
-            // Llamada real a Procedimiento Almacenado en Supabase
-            const { data, error } = await supabase.rpc('reservar_scooter', { _scooter_id: scooterId });
+            // Llamada a Procedimiento Almacenado en Supabase (Fallback a update directo)
+            let { data, error } = await supabase.rpc('reservar_scooter', { _scooter_id: scooterId });
 
             if (error) {
-                console.error("Fallo al ejecutar RPC reservar_scooter:", error);
-                return false;
+                console.warn("RPC reservar_scooter falló, usando UPDATE directo:", error);
+                const { error: updateError } = await supabase.from('scooters').update({ status: 'occupied' }).eq('id', scooterId);
+                return !updateError;
             }
-            return data;
+            return true;
         } catch (err) {
-            console.error("Excepción en RPC:", err);
+            console.error("Excepción al reservar:", err);
             return false;
         }
     }

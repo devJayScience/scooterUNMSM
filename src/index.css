@@ -20,3 +20,83 @@
   height: 100%;
   z-index: 0;
 }
+
+
+/* ANIMACION SUAVE PARA GEMELO DIGITAL */
+.custom-scooter-marker {
+  transition: transform 1.5s linear !important;
+}
+
+@keyframes scroll-road {
+  from {
+    background-position: 0 0;
+  }
+
+  to {
+    background-position: 0 50px;
+  }
+}
+
+@keyframes bounce-soft {
+
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+@layer utilities {
+  .perspective-1000 {
+    perspective: 1000px;
+  }
+
+  .transform-style-3d {
+    transform-style: preserve-3d;
+  }
+}
+
+@keyframes scroll-road-y {
+  from {
+    background-position: center 0;
+  }
+
+  to {
+    background-position: center 100px;
+  }
+}
+
+@keyframes float-3d {
+
+  0%,
+  100% {
+    transform: rotateX(55deg) rotateZ(-40deg) translateZ(0px);
+  }
+
+  50% {
+    transform: rotateX(55deg) rotateZ(-40deg) translateZ(10px);
+  }
+}
+
+@keyframes loading {
+  0% {
+    transform: translateX(-100%);
+  }
+
+  100% {
+    transform: translateX(250%);
+  }
+}
+
+@keyframes spin-slow {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}

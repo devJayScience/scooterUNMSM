@@ -3,11 +3,12 @@ import { useAppStore } from '../context/useAppStore';
 import { LogOut, Navigation2, Clock, Battery, X, Loader2, History } from 'lucide-react';
 import { CampusMap } from '../components/Map/CampusMap';
 import { ScooterMarker, type ScooterData } from '../components/Map/ScooterMarker';
-import { Polyline, Marker } from 'react-leaflet';
+import { Marker } from 'react-leaflet';
 import L from 'leaflet';
 import { CAMPUS_NODES, type Node } from '../config/mapNodes';
-import { getOSRMRoute, interpolatePath } from '../services/routing';
+import { getOSRMRoute } from '../services/routing';
 import { supabase } from '../services/supabase';
+import { IoTSimulation } from '../components/IoTSimulation';
 
 const SPAWN_POINTS: [number, number][] = [
     [-12.0598148, -77.0842696],
@@ -26,6 +27,10 @@ export const StudentView: React.FC = () => {
     const [isRequesting, setIsRequesting] = useState(false);
     const [showHistory, setShowHistory] = useState(false);
     const [history, setHistory] = useState<any[]>([]);
+
+    // Estados para modales de viaje
+    const [showArrivalModal, setShowArrivalModal] = useState(false);
+    const [showFinishModal, setShowFinishModal] = useState({ show: false, destination: '' });
 
     // Cargar Historial real del Estudiante
     const loadHistory = async () => {
@@ -47,8 +52,9 @@ export const StudentView: React.FC = () => {
     const [studentPos, setStudentPos] = useState<[number, number]>(SPAWN_POINTS[0]);
 
     useEffect(() => {
-        // Spawnear aleatoriamente al estudiante en uno de los puntos
-        const randomSpawn = SPAWN_POINTS[Math.floor(Math.random() * SPAWN_POINTS.length)];
+        // En lugar de spawnear aleatorio, seteamos la misma coordenada dura del Mock de Python
+        // para asegurar que el punto A físico coincida matemáticamente con la ruta del backend
+        const randomSpawn = SPAWN_POINTS[0]; // (-12.0598148, -77.0842696)
         setStudentPos(randomSpawn);
         // Cargar Scooters Iniciales (si no se han cargado)
         const loadScooters = async () => {
@@ -70,6 +76,77 @@ export const StudentView: React.FC = () => {
         };
     }, []);
 
+    // Gemelo Digital - Observador en Tiempo Real
+    useEffect(() => {
+        if (!activeTrip) return;
+
+        const rentedScooter = scooters.find(s => s.id === activeTrip.scooterId);
+        if (!rentedScooter) return;
+
+        // Si el estado regresó a available o completada, el viaje terminó (Python Script)
+        if (rentedScooter.status === 'available') {
+            loadHistory();
+            setTripPhase('idle');
+
+            // Mover el punto azul del estudiante al destino final exacto elegido
+            if (selectedDestination) {
+                setStudentPos([selectedDestination.lat, selectedDestination.lng]);
+            } else {
+                setStudentPos([rentedScooter.lat, rentedScooter.lng]);
+            }
+
+            setShowFinishModal({
+                show: true,
+                destination: selectedDestination?.name || 'Destino'
+            });
+
+            setActiveTrip(null);
+            setSelectedDestination(null);
+            return;
+        }
+
+        if (rentedScooter.status === 'maintenance') {
+            // Un obstáculo reportado por sensor cancela el viaje
+            setTripPhase('idle');
+            setActiveTrip(null);
+            setSelectedDestination(null);
+            return;
+        }
+
+        // Calcular distancia al estudiante
+        if (tripPhase === 'calling') {
+            const dist = Math.sqrt(Math.pow(rentedScooter.lat - studentPos[0], 2) + Math.pow(rentedScooter.lng - studentPos[1], 2));
+            if (dist < 0.00015 && !showArrivalModal) { // Llegó al punto de estudiante
+                setShowArrivalModal(true); // Mostrar modal de llegada
+                // No pasamos a 'riding' aún, esperamos el click en el botón del modal
+                if (selectedDestination) {
+                    getOSRMRoute(studentPos, [selectedDestination.lat, selectedDestination.lng]).then(routeToDest => {
+                        setActiveTrip(prev => prev ? {
+                            ...prev,
+                            path: routeToDest ? routeToDest.path : [studentPos, [selectedDestination.lat, selectedDestination.lng]] as [number, number][],
+                            eta: Math.ceil((routeToDest ? routeToDest.duration : 120) / 60)
+                        } : null);
+                    });
+                }
+            }
+        } else if (tripPhase === 'riding') {
+            // Animamos la posición del estudiante PARA QUE VIAJE en el scooter
+            setStudentPos([rentedScooter.lat, rentedScooter.lng]);
+        }
+    }, [scooters]);
+
+    // Polling súper agresivo para asegurar actualización GPS (Bypass de restricción de Supabase Realtime)
+    useEffect(() => {
+        if (!activeTrip) return;
+        const interval = setInterval(async () => {
+            const { data } = await supabase.from('scooters').select('lat, lng, status, battery').eq('id', activeTrip.scooterId).single();
+            if (data) {
+                updateScooter({ ...scooters.find(s => s.id === activeTrip.scooterId), ...data });
+            }
+        }, 1000);
+        return () => clearInterval(interval);
+    }, [activeTrip]);
+
     const handleRequestScooter = async () => {
         if (!selectedScooter || !selectedDestination) {
             alert("Por favor selecciona un destino.");
@@ -80,7 +157,7 @@ export const StudentView: React.FC = () => {
 
         const success = await requestScooterRPC(selectedScooter.id);
         if (!success) {
-            alert("Error: No se pudo reservar el scooter en este momento.");
+            alert("Error al reservar el scooter o la API restringió el write (Seguridad RLS). Revisa consola.");
             setIsRequesting(false);
             return;
         }
@@ -88,7 +165,7 @@ export const StudentView: React.FC = () => {
         const updated = { ...selectedScooter, status: 'occupied' as const };
         updateScooter(updated);
 
-        // Fase 1: Scooter llegando al estudiante
+        // Pedimos la ruta estática a OSRM para dibujar la línea visual principal
         const routeToStudent = await getOSRMRoute([updated.lat, updated.lng], studentPos);
 
         setIsRequesting(false);
@@ -96,89 +173,13 @@ export const StudentView: React.FC = () => {
         setSelectedScooter(null); // Cerrar sidebar
 
         let path = routeToStudent ? routeToStudent.path : [[updated.lat, updated.lng], studentPos] as [number, number][];
-        // Interpolar para que sea fluido. Un frame por cada 200ms aprox (10 seg = 50 frames)
-        const frameCount = 30; // 30 pasos para llegar
-        const smoothPath = interpolatePath(path, frameCount);
-
         const approximatedETA = Math.ceil((routeToStudent ? routeToStudent.duration : 60) / 60); // ETA en mins
 
         setActiveTrip({
             scooterId: updated.id,
             eta: approximatedETA,
-            path: smoothPath
+            path: path
         });
-
-        // Animar al scooter
-        let currentStep = 0;
-        const interval = setInterval(() => {
-            currentStep++;
-            if (currentStep >= smoothPath.length) {
-                clearInterval(interval);
-                handleRidingPhase(updated);
-            } else {
-                updateScooter({ ...updated, lat: smoothPath[currentStep][0], lng: smoothPath[currentStep][1] });
-                setActiveTrip(prev => prev ? { ...prev, eta: Math.max(0, approximatedETA - Math.floor(currentStep / (frameCount / approximatedETA))) } : null);
-            }
-        }, 150); // 150ms * 30 frames = 4.5 segundos físicos en UI
-    };
-
-    const handleRidingPhase = async (scooter: ScooterData) => {
-        setTripPhase('riding');
-        if (!selectedDestination) return; // Fallback typecheck
-
-        // Fase 2: Viajando al destino
-        const routeToDest = await getOSRMRoute(studentPos, [selectedDestination.lat, selectedDestination.lng]);
-        let path = routeToDest ? routeToDest.path : [studentPos, [selectedDestination.lat, selectedDestination.lng]] as [number, number][];
-
-        const frameCount = 40;
-        const smoothPath = interpolatePath(path, frameCount);
-        const approximatedETA = Math.ceil((routeToDest ? routeToDest.duration : 120) / 60);
-
-        setActiveTrip({
-            scooterId: scooter.id,
-            eta: approximatedETA,
-            path: smoothPath
-        });
-
-        let currentStep = 0;
-        const interval = setInterval(async () => {
-            currentStep++;
-            if (currentStep >= smoothPath.length) {
-                clearInterval(interval);
-                // Llamada a RPC para liberar el scooter sin requerir privilegios de Admin,
-                // reubicándolo en las nuevas coordenadas
-                await supabase.rpc('terminar_viaje', {
-                    _scooter_id: scooter.id,
-                    _lat: selectedDestination.lat,
-                    _lng: selectedDestination.lng
-                });
-
-                // Actualización UI local anticipada
-                updateScooter({ ...scooter, lat: selectedDestination.lat, lng: selectedDestination.lng, status: 'available' });
-
-                // Guardar el viaje completado en Supabase (historial de Trips)
-                const newOrderCode = `ORD-${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`;
-                await supabase.from('trips').insert({
-                    order_code: newOrderCode,
-                    scooter_id: scooter.id,
-                    destination: selectedDestination.name,
-                    status: 'Completada'
-                });
-
-                // Recargar el historial local del estudiante
-                loadHistory();
-
-                setStudentPos([selectedDestination.lat, selectedDestination.lng]);
-                setTripPhase('idle');
-                setActiveTrip(null);
-                setSelectedDestination(null);
-            } else {
-                const nextPos = smoothPath[currentStep];
-                // Movemos a ambos juntos
-                updateScooter({ ...scooter, lat: nextPos[0], lng: nextPos[1] });
-                setStudentPos(nextPos);
-            }
-        }, 150);
     };
 
     return (
@@ -207,46 +208,48 @@ export const StudentView: React.FC = () => {
                 </div>
             </header>
 
-            <main className="flex-1 relative flex">
-                <div className="flex-1 relative">
-                    <CampusMap centerPos={studentPos}>
-                        {/* Ubicación del estudiante georeferenciada */}
-                        <Marker
-                            position={studentPos}
-                            icon={new L.DivIcon({
-                                html: `<div class="relative flex items-center justify-center w-8 h-8"><div class="absolute w-16 h-16 bg-blue-500/20 rounded-full animate-ping"></div><div class="w-6 h-6 bg-blue-500 rounded-full border-4 border-white shadow-xl relative z-10"></div></div>`,
-                                className: '',
-                                iconSize: [32, 32],
-                                iconAnchor: [16, 16]
-                            })}
-                            zIndexOffset={1000}
+            <main className="flex-1 relative flex bg-sky-200">
+                {/* 
+                    Condicional: 
+                    Si hay viaje activo -> Muestra la SIMULACIÓN (Video Style) del Scooter
+                    Si no hay viaje -> Muestra el MAPA 2D para elegir scooter 
+                */}
+                {activeTrip ? (
+                    <div className="flex-1 w-full h-full">
+                        {/* Buscamos el scooter atado al viaje (o usamos uno genérico de fallback) */}
+                        <IoTSimulation
+                            scooter={scooters.find(s => s.id === activeTrip.scooterId) || scooters[0]}
+                            destinationName={selectedDestination?.name || "Desconocido"}
+                            eta={activeTrip.eta}
                         />
-
-                        {scooters.map(scooter => (
-                            <ScooterMarker
-                                key={scooter.id}
-                                scooter={scooter}
-                                onClick={(s) => {
-                                    if (s.status === 'available' && tripPhase === 'idle') setSelectedScooter(s);
-                                }}
+                    </div>
+                ) : (
+                    <div className="flex-1 relative w-full h-full overflow-hidden">
+                        <CampusMap centerPos={studentPos}>
+                            {/* Ubicación del estudiante georeferenciada */}
+                            <Marker
+                                position={studentPos}
+                                icon={new L.DivIcon({
+                                    html: `<div class="relative flex items-center justify-center w-8 h-8"><div class="absolute w-16 h-16 bg-blue-500/20 rounded-full animate-ping"></div><div class="w-6 h-6 bg-blue-500 rounded-full border-4 border-white shadow-xl relative z-10"></div></div>`,
+                                    className: '',
+                                    iconSize: [32, 32],
+                                    iconAnchor: [16, 16]
+                                })}
+                                zIndexOffset={1000}
                             />
-                        ))}
 
-                        {/* Polyline del viaje activo (OSRM Path) */}
-                        {activeTrip && (
-                            <Polyline positions={activeTrip.path} color={tripPhase === 'riding' ? "var(--color-unmsm-dorado)" : "var(--color-unmsm-guinda)"} weight={5} dashArray={tripPhase === 'riding' ? "" : "8,8"}>
-                            </Polyline>
-                        )}
-                    </CampusMap>
-
-                    {/* Indicador de ETAs sobre el mapa si hay viaje activo */}
-                    {activeTrip && (
-                        <div className="absolute top-4 left-1/2 transform -translate-x-1/2 z-[1000] bg-white text-[var(--color-unmsm-guinda)] px-6 py-3 rounded-full shadow-lg font-bold flex items-center gap-2 border-2 border-[var(--color-unmsm-guinda)] animate-pulse">
-                            <Clock className="w-5 h-5" />
-                            Tu scooter llegará en {activeTrip.eta} min
-                        </div>
-                    )}
-                </div>
+                            {scooters.map(scooter => (
+                                <ScooterMarker
+                                    key={scooter.id}
+                                    scooter={scooter}
+                                    onClick={(s) => {
+                                        if (s.status === 'available' && tripPhase === 'idle') setSelectedScooter(s);
+                                    }}
+                                />
+                            ))}
+                        </CampusMap>
+                    </div>
+                )}
 
                 {/* Sidebar de Solicitud */}
                 <div className={`absolute right-0 top-0 bottom-0 w-full sm:w-80 bg-white shadow-2xl z-[2000] transform transition-transform duration-300 ease-in-out flex flex-col ${selectedScooter ? 'translate-x-0' : 'translate-x-full'}`}>
@@ -314,11 +317,11 @@ export const StudentView: React.FC = () => {
                     )}
                 </div>
 
-                {/* Panel de Solicitud Activa (Viaje en curso) */}
-                {activeTrip && tripPhase !== 'idle' && (
+                {/* Panel de Solicitud Activa (Viaje en curso) - Oculto durante simulación 3D para evitar traslapes */}
+                {activeTrip && tripPhase !== 'idle' && !showArrivalModal && !showFinishModal.show && !scooters.find(s => s.id === activeTrip.scooterId) && (
                     <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 w-11/12 max-w-md bg-white rounded-2xl shadow-2xl z-[2500] border-2 border-[var(--color-unmsm-guinda)] overflow-hidden animate-in slide-in-from-bottom-10">
                         <div className={`p-3 text-white text-center font-bold transition-colors ${tripPhase === 'riding' ? 'bg-[var(--color-unmsm-dorado)] text-black' : 'bg-[var(--color-unmsm-guinda)]'}`}>
-                            {tripPhase === 'calling' ? '🛴 Scooter en camino...' : '🎒 Estás viajando en el Scooter'}
+                            {tripPhase === 'calling' ? '🛴 Scooter en camino...' : '🎒 Estas viajando en el Scooter'}
                         </div>
                         <div className="p-6 flex items-center justify-between">
                             <div className="flex items-center gap-4">
@@ -375,6 +378,47 @@ export const StudentView: React.FC = () => {
                                     )}
                                 </div>
                             </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Modal de Llegada de Scooter al Estudiante */}
+                {showArrivalModal && (
+                    <div className="absolute inset-0 z-[4000] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-300">
+                        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden flex flex-col items-center p-6 text-center animate-in zoom-in-95">
+                            <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mb-4">
+                                <Navigation2 className="w-10 h-10 text-green-600 animate-bounce" />
+                            </div>
+                            <h2 className="text-2xl font-black text-gray-900 mb-2">¡Tu Scooter llegó!</h2>
+                            <p className="text-gray-600 font-medium mb-6">Sube al scooter. Iniciando trayecto hacia tu paradero destino...</p>
+                            <button
+                                onClick={() => {
+                                    setShowArrivalModal(false);
+                                    setTripPhase('riding'); // Cambiar a 'riding' solo al hacer clic
+                                }}
+                                className="w-full py-3 bg-green-600 hover:bg-green-700 text-white rounded-xl font-bold shadow-lg transition-colors"
+                            >
+                                ¡Vamos!
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* Modal de Fin de Recorrido */}
+                {showFinishModal.show && (
+                    <div className="absolute inset-0 z-[4000] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-300">
+                        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden flex flex-col items-center p-6 text-center animate-in zoom-in-95">
+                            <div className="w-20 h-20 bg-[var(--color-unmsm-dorado)] rounded-full flex items-center justify-center mb-4 border-4 border-white shadow-lg">
+                                <LogOut className="w-10 h-10 text-[var(--color-unmsm-guinda)] translate-x-1" />
+                            </div>
+                            <h2 className="text-2xl font-black text-gray-900 mb-2">¡Fin del Recorrido!</h2>
+                            <p className="text-gray-600 font-medium mb-6">Has llegado a <span className="font-bold text-[var(--color-unmsm-guinda)]">{showFinishModal.destination}</span>. ¡Gracias por usar Scooters UNMSM!</p>
+                            <button
+                                onClick={() => setShowFinishModal({ show: false, destination: '' })}
+                                className="w-full py-3 bg-[var(--color-unmsm-guinda)] hover:bg-[#600000] text-white rounded-xl font-bold shadow-lg transition-colors"
+                            >
+                                Aceptar
+                            </button>
                         </div>
                     </div>
                 )}
