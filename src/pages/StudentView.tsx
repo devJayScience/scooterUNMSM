@@ -201,25 +201,42 @@ export const StudentView: React.FC = () => {
 
         setIsRequesting(true);
 
+        // 1. Reservar el scooter (RPC existente)
         const success = await requestScooterRPC(selectedScooter.id);
         if (!success) {
-            alert("Error al reservar el scooter o la API restringió el write (Seguridad RLS). Revisa consola.");
+            alert("Error al reservar el scooter.");
             setIsRequesting(false);
             return;
         }
 
+        // --- NUEVO BLOQUE: REGISTRAR EL VIAJE EN LA BASE DE DATOS ---
+        const { error: tripError } = await supabase
+            .from('trips')
+            .insert([{
+                order_code: `TRIP-${Math.floor(Math.random() * 10000)}`,
+                scooter_id: selectedScooter.id,
+                origin: "Puerta 1 - Venezuela", // Debería venir de studentPos o un nodo cercano
+                destination: selectedDestination.name,
+                status: 'Completada', // O 'En curso' si manejas estados dinámicos
+                user_id: null // O el ID del usuario si usas Auth
+            }]);
+
+        if (tripError) {
+            console.error("Error al crear registro de viaje:", tripError);
+        }
+        // -----------------------------------------------------------
+
         const updated = { ...selectedScooter, status: 'occupied' as const };
         updateScooter(updated);
 
-        // Pedimos la ruta estática a OSRM para dibujar la línea visual principal
         const routeToStudent = await getOSRMRoute([updated.lat, updated.lng], studentPos);
 
         setIsRequesting(false);
         setTripPhase('calling');
-        setSelectedScooter(null); // Cerrar sidebar
+        setSelectedScooter(null);
 
         let path = routeToStudent ? routeToStudent.path : [[updated.lat, updated.lng], studentPos] as [number, number][];
-        const approximatedETA = Math.ceil((routeToStudent ? routeToStudent.duration : 60) / 60); // ETA en mins
+        const approximatedETA = Math.ceil((routeToStudent ? routeToStudent.duration : 60) / 60);
 
         setActiveTrip({
             scooterId: updated.id,
