@@ -50,6 +50,46 @@ export const StudentView: React.FC = () => {
     const [tripPhase, setTripPhase] = useState<'idle' | 'calling' | 'riding'>('idle');
     const [activeTrip, setActiveTrip] = useState<{ scooterId: string, eta: number, path: [number, number][] } | null>(null);
     const [studentPos, setStudentPos] = useState<[number, number]>(SPAWN_POINTS[0]);
+    const [show3D, setShow3D] = useState<boolean>(false);
+
+    useEffect(() => {
+        // Mostrar simulación 3D al solicitar viaje, máximo 10 segundos
+        if (tripPhase === 'calling') {
+            setShow3D(true);
+            const timer = setTimeout(() => {
+                setShow3D(false);
+
+                // 1. Mover estudiante al destino
+                if (selectedDestination) {
+                    setStudentPos([selectedDestination.lat, selectedDestination.lng]);
+                }
+
+                // 2. Mostrar modal de fin de recorrido
+                setShowFinishModal({
+                    show: true,
+                    destination: selectedDestination?.name || 'Destino'
+                });
+
+                // 3. Liberar el scooter en la base de datos
+                if (activeTrip) {
+                    supabase.from('scooters').update({ status: 'available' }).eq('id', activeTrip.scooterId).then(() => {
+                        // Actualizar localmente también
+                        const sc = scooters.find(s => s.id === activeTrip.scooterId);
+                        if (sc) updateScooter({ ...sc, status: 'available' });
+                    });
+                }
+
+                // 4. Resetear estado del viaje
+                loadHistory();
+                setTripPhase('idle');
+                setActiveTrip(null);
+                setSelectedDestination(null);
+            }, 10000);
+            return () => clearTimeout(timer);
+        } else if (tripPhase === 'idle') {
+            setShow3D(false);
+        }
+    }, [tripPhase]);
 
     useEffect(() => {
         // En lugar de spawnear aleatorio, seteamos la misma coordenada dura del Mock de Python
@@ -84,21 +124,27 @@ export const StudentView: React.FC = () => {
         if (!rentedScooter) return;
 
         // Si el estado regresó a available o completada, el viaje terminó (Python Script)
-        if (rentedScooter.status === 'available') {
+        // GUARD: Solo procesamos si no fue ya manejado por el timer de la simulación 3D
+        if (rentedScooter.status === 'available' && activeTrip) {
+            // Si show3D está activo, ignoramos — el timer del 3D se encargará
+            if (show3D) return;
+
             loadHistory();
             setTripPhase('idle');
 
-            // Mover el punto azul del estudiante al destino final exacto elegido
             if (selectedDestination) {
                 setStudentPos([selectedDestination.lat, selectedDestination.lng]);
             } else {
                 setStudentPos([rentedScooter.lat, rentedScooter.lng]);
             }
 
-            setShowFinishModal({
-                show: true,
-                destination: selectedDestination?.name || 'Destino'
-            });
+            // Solo mostrar modal si no hay uno ya visible
+            if (!showFinishModal.show) {
+                setShowFinishModal({
+                    show: true,
+                    destination: selectedDestination?.name || 'Destino'
+                });
+            }
 
             setActiveTrip(null);
             setSelectedDestination(null);
@@ -209,14 +255,8 @@ export const StudentView: React.FC = () => {
             </header>
 
             <main className="flex-1 relative flex bg-sky-200">
-                {/* 
-                    Condicional: 
-                    Si hay viaje activo -> Muestra la SIMULACIÓN (Video Style) del Scooter
-                    Si no hay viaje -> Muestra el MAPA 2D para elegir scooter 
-                */}
-                {activeTrip ? (
-                    <div className="flex-1 w-full h-full">
-                        {/* Buscamos el scooter atado al viaje (o usamos uno genérico de fallback) */}
+                {activeTrip && show3D ? (
+                    <div className="flex-1 w-full h-full relative z-[200]">
                         <IoTSimulation
                             scooter={scooters.find(s => s.id === activeTrip.scooterId) || scooters[0]}
                             destinationName={selectedDestination?.name || "Desconocido"}
@@ -224,9 +264,8 @@ export const StudentView: React.FC = () => {
                         />
                     </div>
                 ) : (
-                    <div className="flex-1 relative w-full h-full overflow-hidden">
+                    <div className="flex-1 w-full h-full overflow-hidden relative z-10">
                         <CampusMap centerPos={studentPos}>
-                            {/* Ubicación del estudiante georeferenciada */}
                             <Marker
                                 position={studentPos}
                                 icon={new L.DivIcon({
@@ -237,7 +276,6 @@ export const StudentView: React.FC = () => {
                                 })}
                                 zIndexOffset={1000}
                             />
-
                             {scooters.map(scooter => (
                                 <ScooterMarker
                                     key={scooter.id}
