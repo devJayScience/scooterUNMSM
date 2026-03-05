@@ -5,7 +5,7 @@ export interface Node {
     lng: number;
 }
 
-// Puntos estratégicos de la Universidad Nacional Mayor de San Marcos con coordenadas exactas
+// Puntos estratégicos de la UNMSM normalizados con la Base de Datos
 export const CAMPUS_NODES: Node[] = [
     { id: 'p1', name: 'Puerta 1', lat: -12.0609378, lng: -77.0855789 },
     { id: 'p2', name: 'Puerta 2', lat: -12.0594641, lng: -77.0796490 },
@@ -18,10 +18,11 @@ export const CAMPUS_NODES: Node[] = [
     { id: 'clinica', name: 'Clínica Universitaria', lat: -12.0556163, lng: -77.0820048 },
     { id: 'f_educacion', name: 'Fac. Educación', lat: -12.0545032, lng: -77.0847398 },
     { id: 'f_odontologia', name: 'Fac. Odontología', lat: -12.0538685, lng: -77.0860165 },
-    { id: 'f_sistemas', name: 'Fac. Ing. de Sistemas', lat: -12.0536365, lng: -77.0857319 }
+    // CAMBIO CLAVE: Nombre idéntico al de Analytics y Base de Datos
+    { id: 'f_sistemas', name: 'Facultad de Sistemas (FISI)', lat: -12.0536365, lng: -77.0857319 }
 ];
 
-// Rutas de conexión simples para la demostración
+// Rutas de conexión (Edges) - Se mantienen los IDs pero los nombres en el menú cambiarán
 export const ROUTE_EDGES: [string, string][] = [
     ['p1', 'f_matematicas'], ['f_matematicas', 'comedor'], ['comedor', 'p2'],
     ['p1', 'biblioteca'], ['biblioteca', 'f_educacion'], ['f_educacion', 'p7'],

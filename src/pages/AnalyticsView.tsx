@@ -9,19 +9,19 @@ const DESTINATION_COLORS: Record<string, string> = {
   'Biblioteca Central': '#1d4ed8',        // Azul
   'Facultad de Sistemas (FISI)': '#9b111e', // Guinda
   'Clínica Universitaria': '#d97706',     // Ámbar
-  'Puerta 1 - Venezuela': '#7e22ce',      // Violeta
-  'Estadio San Marcos': '#0891b2',        // Cian
+  'Puerta 1': '#7e22ce',                  // Violeta
+  'Puerta 8': '#0891b2',                  // Cian
   'Otros': '#64748b'
 };
 
 // 2. BENCHMARK DE CAMINATA POR RUTA (Tiempos estimados en minutos)
 const WALKING_BENCHMARK: Record<string, number> = {
-  'Puerta 1 - Venezuela ➔ Facultad de Sistemas (FISI)': 12,
+  'Puerta 1 ➔ Facultad de Sistemas (FISI)': 12,
   'Biblioteca Central ➔ Comedor Universitario': 10,
-  'Estadio San Marcos ➔ Facultad de Sistemas (FISI)': 25,
+  'Puerta 8 ➔ Facultad de Sistemas (FISI)': 25,
   'Facultad de Sistemas (FISI) ➔ Biblioteca Central': 8,
-  'Estadio San Marcos ➔ Comedor Universitario': 28,
-  'Puerta 1 - Venezuela ➔ Clínica Universitaria': 20,
+  'Puerta 8 ➔ Comedor Universitario': 28,
+  'Puerta 1 ➔ Clínica Universitaria': 20,
 };
 
 // COMPONENTE: Etiquetas horizontales en 2 líneas para el eje X

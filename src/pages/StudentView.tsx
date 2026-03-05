@@ -215,7 +215,7 @@ export const StudentView: React.FC = () => {
             .insert([{
                 order_code: `TRIP-${Math.floor(Math.random() * 10000)}`,
                 scooter_id: selectedScooter.id,
-                origin: "Puerta 1 - Venezuela", // Debería venir de studentPos o un nodo cercano
+                origin: "Puerta 1", // Debería venir de studentPos o un nodo cercano
                 destination: selectedDestination.name,
                 status: 'Completada', // O 'En curso' si manejas estados dinámicos
                 user_id: null // O el ID del usuario si usas Auth
